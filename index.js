@@ -1,5 +1,5 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
-import { default as express } from "express";
+import express from "express";
 import cors from "cors";
 import { PORT, AUTH_TOKEN } from "./config.js";
 import QRCode from "qrcode";
@@ -8,10 +8,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Estado global del socket
+// Socket WhatsApp global
 let sock;
 
-// Inicializar WhatsApp
+// Iniciar sesión WhatsApp
 async function iniciarSesion() {
   const { state, saveCreds } = await useMultiFileAuthState("./auth");
 
@@ -27,7 +27,7 @@ async function iniciarSesion() {
     const { connection, qr, lastDisconnect } = update;
 
     if (qr) {
-      console.log("QR generado. Escanéalo con tu WhatsApp.");
+      console.log("QR generado. Escanéalo desde /qr");
     }
 
     if (connection === "close") {
@@ -36,7 +36,7 @@ async function iniciarSesion() {
         console.log("Reconectando...");
         iniciarSesion();
       } else {
-        console.log("Sesión cerrada. Se requiere QR nuevamente.");
+        console.log("Sesión cerrada. Requiere nuevo QR.");
       }
     }
 
@@ -49,70 +49,68 @@ async function iniciarSesion() {
 iniciarSesion();
 
 /******************************************************
- * ENDPOINT 1 — Obtener QR para iniciar sesión
+ * QR Endpoint
  ******************************************************/
 app.get("/qr", async (req, res) => {
-  if (sock?.connection?.qr) {
+  try {
+    if (!sock?.connection?.qr) return res.send("QR no disponible");
     const code = await QRCode.toDataURL(sock.connection.qr);
-    return res.send(`<img src="${code}" />`);
-  } else {
-    return res.send("No hay QR disponible.");
+    res.send(`<img src="${code}" />`);
+  } catch (err) {
+    res.send("Error mostrando QR");
   }
 });
 
 /******************************************************
- * Validar TOKEN en cada request
+ * Seguridad por TOKEN
  ******************************************************/
 app.use((req, res, next) => {
   if (req.headers.authorization !== AUTH_TOKEN) {
-    return res.status(403).json({ error: "Token inválido" });
+    return res.status(403).json({ error: "Token incorrecto" });
   }
   next();
 });
 
 /******************************************************
- * ENDPOINT 2 — Enviar mensaje individual
+ * Enviar mensaje a un número
  ******************************************************/
 app.post("/send", async (req, res) => {
   const { phone, message } = req.body;
 
   if (!phone || !message) {
-    return res.status(400).json({ error: "Faltan parámetros" });
+    return res.status(400).json({ error: "Datos incompletos" });
   }
 
   try {
     await sock.sendMessage(phone + "@s.whatsapp.net", { text: message });
     return res.json({ status: "ok" });
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
 /******************************************************
- * ENDPOINT 3 — Enviar broadcast por ciudad
+ * Broadcast por ciudad
  ******************************************************/
 app.post("/broadcastCiudad", async (req, res) => {
-  const { city, users, message } = req.body;
+  const { users, message } = req.body;
 
-  if (!city || !users || !message) {
-    return res.status(400).json({ error: "Faltan parámetros" });
+  if (!users || !message) {
+    return res.status(400).json({ error: "Datos incompletos" });
   }
 
   try {
-    for (const u of users) {
+    for (let u of users) {
       await sock.sendMessage(u.phone + "@s.whatsapp.net", { text: message });
-      await new Promise(resolve => setTimeout(resolve, 200)); // evita spam detection
+      await new Promise(r => setTimeout(r, 200));
     }
 
-    return res.json({ status: "ok", enviados: users.length });
-  } catch (e) {
-    return res.status(500).json({ error: e.message });
+    return res.json({ enviados: users.length });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 });
 
-/******************************************************
- * Servidor listo
- ******************************************************/
 app.listen(PORT, () => {
   console.log(`Servidor WhatsApp listo en puerto ${PORT}`);
 });
