@@ -1,4 +1,9 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason } from "@whiskeysockets/baileys";
+import { 
+  default: makeWASocket, 
+  useMultiFileAuthState, 
+  DisconnectReason 
+} from "@whiskeysockets/baileys";
+
 import express from "express";
 import cors from "cors";
 import QRCode from "qrcode";
@@ -8,14 +13,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Guardamos el QR temporalmente
 let qrGlobal = null;
-
-// Socket WhatsApp global
 let sock;
 
 /******************************************************
- * INICIAR SESIÓN DE WHATSAPP
+ * INICIAR SESIÓN
  ******************************************************/
 async function iniciarSesion() {
   const { state, saveCreds } = await useMultiFileAuthState("./auth");
@@ -23,62 +25,56 @@ async function iniciarSesion() {
   sock = makeWASocket({
     printQRInTerminal: false,
     auth: state,
-    browser: ["Chrome (Linux)", "Chrome", "110.0.0.0"],
+    browser: ["Chrome (Linux)", "Chrome", "110.0"],
     syncFullHistory: false
   });
 
   sock.ev.on("creds.update", saveCreds);
 
-  /******************************************************
-   * EVENTOS DE CONEXIÓN
-   ******************************************************/
-  sock.ev.on("connection.update", async (update) => {
+  sock.ev.on("connection.update", (update) => {
     const { connection, qr, lastDisconnect } = update;
 
-    // Si Baileys genera un QR → lo guardamos
     if (qr) {
       qrGlobal = qr;
-      console.log("QR listo ✔ Escanéalo en /qr");
+      console.log("📲 Nuevo QR generado. Ver en /qr");
     }
 
-    // Si se conecta -> limpiamos QR
     if (connection === "open") {
-      console.log("WhatsApp conectado ✔");
+      console.log("✔ WhatsApp conectado");
       qrGlobal = null;
     }
 
-    // Reconexión automática
     if (connection === "close") {
       const reason = lastDisconnect?.error?.output?.statusCode;
+
       if (reason !== DisconnectReason.loggedOut) {
-        console.log("Reconectando...");
+        console.log("♻️ Reconectando...");
         iniciarSesion();
       } else {
-        console.log("Sesión cerrada. Debes escanear QR nuevamente.");
+        console.log("⛔ Sesión cerrada. Necesitas escanear un nuevo QR.");
       }
     }
   });
 }
 
-// Iniciar proceso
 iniciarSesion();
 
 /******************************************************
- * ENDPOINT: MOSTRAR QR
+ * QR
  ******************************************************/
 app.get("/qr", async (req, res) => {
   try {
-    if (!qrGlobal) return res.send("QR no disponible (esperando reconexión)");
+    if (!qrGlobal) return res.send("QR no disponible todavía");
 
-    const qrCodeImage = await QRCode.toDataURL(qrGlobal);
-    res.send(`<img src="${qrCodeImage}" style="width:300px" />`);
+    const img = await QRCode.toDataURL(qrGlobal);
+    res.send(`<img src="${img}" style="width:280px">`);
   } catch (e) {
     res.send("Error generando QR");
   }
 });
 
 /******************************************************
- * AUTORIZACIÓN (TOKEN)
+ * TOKEN DE AUTORIZACIÓN
  ******************************************************/
 app.use((req, res, next) => {
   if (req.headers.authorization !== AUTH_TOKEN) {
@@ -88,46 +84,43 @@ app.use((req, res, next) => {
 });
 
 /******************************************************
- * ENDPOINT: ENVIAR MENSAJE INDIVIDUAL
+ * ENVIAR MENSAJE
  ******************************************************/
 app.post("/send", async (req, res) => {
   const { phone, message } = req.body;
-
   if (!phone || !message)
     return res.status(400).json({ error: "Faltan parámetros" });
 
   try {
-    await sock.sendMessage(phone + "@s.whatsapp.net", { text: message });
-    return res.json({ status: "ok" });
+    await sock.sendMessage(`${phone}@s.whatsapp.net`, { text: message });
+    res.json({ status: "ok" });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 
 /******************************************************
- * ENDPOINT: ENVIAR BROADCAST A LISTA DE USUARIOS
+ * BROADCAST
  ******************************************************/
 app.post("/broadcastCiudad", async (req, res) => {
   const { users, message } = req.body;
-
   if (!users || !message)
     return res.status(400).json({ error: "Faltan parámetros" });
 
   try {
     for (let u of users) {
-      await sock.sendMessage(u.phone + "@s.whatsapp.net", { text: message });
-      await new Promise((r) => setTimeout(r, 200)); // evita bloqueo
+      await sock.sendMessage(`${u.phone}@s.whatsapp.net`, { text: message });
+      await new Promise((r) => setTimeout(r, 200));
     }
-
-    return res.json({ enviados: users.length });
+    res.json({ enviados: users.length });
   } catch (e) {
-    return res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 
 /******************************************************
- * INICIAR SERVIDOR
+ * SERVIDOR
  ******************************************************/
-app.listen(PORT, () => {
-  console.log(`Servidor WhatsApp listo en puerto ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`🚀 Servidor WhatsApp listo en puerto ${PORT}`)
+);
